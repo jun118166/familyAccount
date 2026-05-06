@@ -19,22 +19,29 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-# 初始化数据库表
+# 初始化数据库表（仅在表不存在时创建）
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            description TEXT NOT NULL,
-            category TEXT NOT NULL,
-            amount REAL NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
+    
+    # 检查表是否已存在
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'")
+    table_exists = cursor.fetchone()
+    
+    if not table_exists:
+        cursor.execute('''
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                description TEXT NOT NULL,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+    
     conn.close()
 
 # API 端点
