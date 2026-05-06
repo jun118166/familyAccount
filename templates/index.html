@@ -207,6 +207,47 @@
             box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
         }
 
+        .btn-secondary {
+            background: rgba(0, 255, 255, 0.1);
+            color: #00ffff;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 255, 255, 0.2);
+            border-color: rgba(0, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: #aaa;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-outline:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        .import-export-card {
+            margin-bottom: 20px;
+        }
+
+        .import-export-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+        }
+
+        .help-text {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 10px;
+        }
+
         .btn-sm {
             padding: 6px 15px;
             font-size: 0.8rem;
@@ -375,6 +416,22 @@
             </div>
         </div>
 
+        <!-- 导入导出操作区 -->
+        <div class="card import-export-card">
+            <h3 class="card-title">数据管理</h3>
+            <div class="import-export-buttons">
+                <button class="btn btn-secondary" onclick="exportData()">
+                    <i>📥</i> 导出数据
+                </button>
+                <button class="btn btn-secondary" onclick="openImportModal()">
+                    <i>📤</i> 导入数据
+                </button>
+                <button class="btn btn-outline" onclick="downloadTemplate()">
+                    <i>📄</i> 下载模板
+                </button>
+            </div>
+        </div>
+
         <div class="main-content">
             <div class="card">
                 <h3 class="card-title">支出分类统计</h3>
@@ -497,6 +554,22 @@
                     <textarea id="edit-description" rows="3"></textarea>
                 </div>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">保存修改</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 导入模态框 -->
+    <div class="modal-overlay" id="import-modal">
+        <div class="modal" style="position: relative;">
+            <button class="close-btn" onclick="closeImportModal()">&times;</button>
+            <h3 class="modal-title">导入数据</h3>
+            <form id="import-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="import-file">选择 CSV 文件</label>
+                    <input type="file" id="import-file" accept=".csv" required>
+                    <p class="help-text">请先下载模板，按照模板格式填写数据后再导入</p>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">开始导入</button>
             </form>
         </div>
     </div>
@@ -726,6 +799,82 @@
                 toast.classList.remove('show');
             }, 3000);
         }
+
+        // 导出数据
+        async function exportData() {
+            try {
+                const response = await fetch('/api/export');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                showToast(true, '数据导出成功');
+            } catch (error) {
+                showToast(false, '导出失败：' + error.message);
+            }
+        }
+
+        // 打开导入模态框
+        function openImportModal() {
+            document.getElementById('import-modal').classList.add('active');
+            document.getElementById('import-form').reset();
+        }
+
+        // 关闭导入模态框
+        function closeImportModal() {
+            document.getElementById('import-modal').classList.remove('active');
+        }
+
+        // 下载模板
+        async function downloadTemplate() {
+            try {
+                const response = await fetch('/api/import/template');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'import_template.csv';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                showToast(true, '模板下载成功');
+            } catch (error) {
+                showToast(false, '下载失败：' + error.message);
+            }
+        }
+
+        // 导入数据
+        document.getElementById('import-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const file = document.getElementById('import-file').files[0];
+            if (!file) {
+                showToast(false, '请选择要导入的文件');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/api/import', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            showToast(result.success, result.message);
+            
+            if (result.success) {
+                closeImportModal();
+                await fetchTransactions();
+            }
+        });
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
