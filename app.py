@@ -1,37 +1,38 @@
 from flask import Flask, request, jsonify, render_template
 from datetime import datetime
 import os
-import json
+import sqlite3
 
 app = Flask(__name__)
 
-# 使用环境变量存储数据（用于演示，实际部署应使用 Vercel KV）
-# 在 Vercel 生产环境中，请使用 @vercel/kv
-TRANSACTIONS_KEY = "finance_transactions"
+# SQLite 配置 - 使用 Vercel 可写的临时目录
+# 注意：/tmp 目录在 Vercel Serverless 环境中是可写的，但数据不会持久化
+# 每次部署或冷启动后数据会丢失
+DATABASE = os.path.join('/tmp', 'finance.db')
 
-# 模拟内存存储（用于开发测试）
-_memory_store = {}
+# 获取数据库连接
+def get_db():
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def get_transactions_from_store():
-    try:
-        # 尝试使用 Vercel KV
-        from vercel.kv import get, set
-        data = get(TRANSACTIONS_KEY)
-        if data:
-            return json.loads(data)
-        return []
-    except ImportError:
-        # 回退到内存存储
-        return _memory_store.get(TRANSACTIONS_KEY, [])
-
-def save_transactions_to_store(transactions):
-    try:
-        # 尝试使用 Vercel KV
-        from vercel.kv import set
-        set(TRANSACTIONS_KEY, json.dumps(transactions))
-    except ImportError:
-        # 回退到内存存储
-        _memory_store[TRANSACTIONS_KEY] = transactions
+# 初始化数据库表
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 # API 端点
 
@@ -42,9 +43,25 @@ def index():
 @app.route('/api/transactions', methods=['GET'])
 def get_transactions():
     try:
-        transactions = get_transactions_from_store()
-        transactions.sort(key=lambda x: (x['date'], x['created_at']), reverse=True)
-        return jsonify({'success': True, 'data': transactions})
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM transactions ORDER BY date DESC, created_at DESC')
+        transactions = cursor.fetchall()
+        conn.close()
+        
+        result = []
+        for row in transactions:
+            result.append({
+                'id': row['id'],
+                'date': row['date'],
+                'description': row['description'],
+                'category': row['category'],
+                'amount': float(row['amount']),
+                'type': row['type'],
+                'created_at': row['created_at']
+            })
+        
+        return jsonify({'success': True, 'data': result})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -52,21 +69,21 @@ def get_transactions():
 def add_transaction():
     try:
         data = request.get_json()
-        transactions = get_transactions_from_store()
+        date = data['date']
+        description = data['description']
+        category = data['category']
+        amount = data['amount']
+        type_ = data['type']
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        new_id = max([t['id'] for t in transactions], default=0) + 1
-        new_transaction = {
-            'id': new_id,
-            'date': data['date'],
-            'description': data['description'],
-            'category': data['category'],
-            'amount': float(data['amount']),
-            'type': data['type'],
-            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        transactions.append(new_transaction)
-        save_transactions_to_store(transactions)
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO transactions (date, description, category, amount, type, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (date, description, category, amount, type_, created_at))
+        conn.commit()
+        conn.close()
         
         return jsonify({'success': True, 'message': '记录添加成功'})
     except Exception as e:
@@ -76,18 +93,22 @@ def add_transaction():
 def update_transaction(id):
     try:
         data = request.get_json()
-        transactions = get_transactions_from_store()
+        date = data['date']
+        description = data['description']
+        category = data['category']
+        amount = data['amount']
+        type_ = data['type']
         
-        for t in transactions:
-            if t['id'] == id:
-                t['date'] = data['date']
-                t['description'] = data['description']
-                t['category'] = data['category']
-                t['amount'] = float(data['amount'])
-                t['type'] = data['type']
-                break
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE transactions 
+            SET date=?, description=?, category=?, amount=?, type=?
+            WHERE id=?
+        ''', (date, description, category, amount, type_, id))
+        conn.commit()
+        conn.close()
         
-        save_transactions_to_store(transactions)
         return jsonify({'success': True, 'message': '记录更新成功'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -95,9 +116,12 @@ def update_transaction(id):
 @app.route('/api/transactions/<int:id>', methods=['DELETE'])
 def delete_transaction(id):
     try:
-        transactions = get_transactions_from_store()
-        transactions = [t for t in transactions if t['id'] != id]
-        save_transactions_to_store(transactions)
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM transactions WHERE id=?', (id,))
+        conn.commit()
+        conn.close()
+        
         return jsonify({'success': True, 'message': '记录删除成功'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -105,18 +129,33 @@ def delete_transaction(id):
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
     try:
-        transactions = get_transactions_from_store()
+        conn = get_db()
+        cursor = conn.cursor()
         
-        total_income = sum(t['amount'] for t in transactions if t['type'] == 'income')
-        total_expense = sum(t['amount'] for t in transactions if t['type'] == 'expense')
+        # 总收入
+        cursor.execute('SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type="income"')
+        total_income = cursor.fetchone()[0] or 0.0
         
-        expense_by_category = {}
-        for t in transactions:
-            if t['type'] == 'expense':
-                expense_by_category[t['category']] = expense_by_category.get(t['category'], 0) + t['amount']
+        # 总支出
+        cursor.execute('SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type="expense"')
+        total_expense = cursor.fetchone()[0] or 0.0
         
-        categories = list(expense_by_category.keys())
-        amounts = list(expense_by_category.values())
+        # 支出分类统计
+        cursor.execute('''
+            SELECT category, SUM(amount) 
+            FROM transactions 
+            WHERE type="expense" 
+            GROUP BY category
+        ''')
+        expense_by_category = cursor.fetchall()
+        
+        conn.close()
+        
+        categories = []
+        amounts = []
+        for row in expense_by_category:
+            categories.append(row['category'])
+            amounts.append(float(row['SUM(amount)']))
         
         return jsonify({
             'success': True,
@@ -133,6 +172,9 @@ def get_statistics():
 
 # Vercel 部署需要的应用对象
 application = app
+
+# 初始化数据库（在模块加载时执行）
+init_db()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
