@@ -510,16 +510,30 @@
         // 初始化日期为今天
         document.getElementById('date').value = new Date().toISOString().split('T')[0];
 
-        // 获取统计数据
-        async function fetchStatistics() {
-            const response = await fetch('/api/statistics');
-            const data = await response.json();
-            if (data.success) {
-                document.getElementById('balance').textContent = '¥ ' + data.data.balance.toFixed(2);
-                document.getElementById('total-income').textContent = '¥ ' + data.data.total_income.toFixed(2);
-                document.getElementById('total-expense').textContent = '¥ ' + data.data.total_expense.toFixed(2);
-                updateChart(data.data.expense_categories, data.data.expense_amounts);
-            }
+        // 从交易数据计算统计信息
+        function calculateStatistics(transactions) {
+            const total_income = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+            const total_expense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+            const balance = total_income - total_expense;
+            
+            const expense_by_category = {};
+            transactions.filter(t => t.type === 'expense').forEach(t => {
+                expense_by_category[t.category] = (expense_by_category[t.category] || 0) + t.amount;
+            });
+            
+            const categories = Object.keys(expense_by_category);
+            const amounts = Object.values(expense_by_category);
+            
+            return { total_income, total_expense, balance, categories, amounts };
+        }
+
+        // 更新统计显示
+        function updateStatistics(transactions) {
+            const stats = calculateStatistics(transactions);
+            document.getElementById('balance').textContent = '¥ ' + stats.balance.toFixed(2);
+            document.getElementById('total-income').textContent = '¥ ' + stats.total_income.toFixed(2);
+            document.getElementById('total-expense').textContent = '¥ ' + stats.total_expense.toFixed(2);
+            updateChart(stats.categories, stats.amounts);
         }
 
         // 获取交易列表
@@ -528,6 +542,7 @@
             const data = await response.json();
             if (data.success) {
                 renderTransactions(data.data);
+                updateStatistics(data.data);
             }
         }
 
@@ -628,7 +643,7 @@
             if (result.success) {
                 document.getElementById('transaction-form').reset();
                 document.getElementById('date').value = new Date().toISOString().split('T')[0];
-                await Promise.all([fetchStatistics(), fetchTransactions()]);
+                await fetchTransactions();
             }
         });
 
@@ -675,7 +690,7 @@
             
             if (result.success) {
                 closeModal();
-                await Promise.all([fetchStatistics(), fetchTransactions()]);
+                await fetchTransactions();
             }
         });
 
@@ -691,7 +706,7 @@
             showToast(result.success, result.message);
             
             if (result.success) {
-                await Promise.all([fetchStatistics(), fetchTransactions()]);
+                await fetchTransactions();
             }
         }
 
@@ -714,7 +729,6 @@
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
-            fetchStatistics();
             fetchTransactions();
         });
     </script>
