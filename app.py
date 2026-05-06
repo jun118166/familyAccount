@@ -4,13 +4,14 @@ import os
 import sqlite3
 import csv
 import io
+import tempfile
 
 app = Flask(__name__)
 
-# SQLite 配置 - 使用 Vercel 可写的临时目录
-# 注意：/tmp 目录在 Vercel Serverless 环境中是可写的，但数据不会持久化
+# SQLite 配置 - 使用系统临时目录（跨平台兼容）
+# 注意：临时目录在 Vercel Serverless 环境中是可写的，但数据不会持久化
 # 每次部署或冷启动后数据会丢失
-DATABASE = os.path.join('/tmp', 'finance.db')
+DATABASE = os.path.join(tempfile.gettempdir(), 'finance.db')
 
 # 获取数据库连接
 def get_db():
